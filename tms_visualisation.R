@@ -1,5 +1,5 @@
 library(tidyverse)
-source("stability_analysis_saliva/process_tms_data.R")
+source("./process_tms_data.R")
 
 #REMOVE OUTLIER
 tms_processed <- tms_processed %>% filter(fraction < 5)

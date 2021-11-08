@@ -8,6 +8,11 @@ output: html_document
 ```{r setup, include=FALSE}
 library(tidyverse)
 library(brms)
+library(knitr)
+library(kableExtra)
+library(lme4)
+library(lmerTest)
+library(jtools)
 ```
 
 ## Explanation of modelling process
@@ -15,17 +20,6 @@ library(brms)
 This R Markdown document estimates the degradation of steroids in long-term
 storage. Samples were extracted from reesarch subjects and analysed at 
 six different timepoints, with the last timepoint >600 days after baseline.
-
-Prior to estimation, the data was transformed so that all salivary concentrations
-are as a proportion of baseline concentration. i.e.:
-
-$$
-y_{transformed} = y_t / y_0
-$$
-
-for all $t \sim 1, ... , 5$
-
-
 
 ```{r process_data}
 
@@ -36,12 +30,292 @@ tms_processed <- tms_processed %>% filter(fraction < 5)
 tms_processed$conc_nmol <- tms_processed$value / 1000
 ```
 
-## Including Plots
+### Initial plots of raw data
 
-You can also embed plots, for example:
+Plots of raw salivary steroid concentration against time
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+```{r plot_raw, echo=TRUE}
+ggplot(data = tms_processed,
+       aes(x=days, y=value, col=sample_id, group=sample_id)) +
+  geom_line() +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  facet_wrap(vars(biomarker), scales = "free")
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+### Initial plots of transformed (scaled as proportion of baseline) data
+
+A simple spline model is fitted to estimate general trend
+
+```{r plot_proportions, echo=TRUE}
+ggplot(data = tms_processed,
+       aes(x = days, y = 100 * (fraction - 1))) +
+  ylab("% Change") +
+  geom_line(aes(col=sample_id, group=sample_id)) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  facet_wrap(vars(biomarker), scales = "free") +
+  stat_smooth(method = "gam", formula = y ~ s(x, k = 4), size = 1)
+```
+
+## Mixed effects ANOVA
+First we run a mixed effects linear model to test the hypothesis $\beta_1 = 0$ for formula below:
+
+$$conc = beta_0 + u_j + beta_1time + \epsilon$$
+where $$u_j \sim N(0, \sigma_j)$$
+
+for subjects $j = 1, ... ,n$
+
+```{r mixed_ANOVA, results='asis', echo=FALSE}
+for (bio in unique(tms_processed$biomarker)){
+    cat("\n")
+    cat(paste("#### Analysing:", bio, "\n"))
+    cat("\n")
+
+    df <- tms_processed %>% filter(biomarker == bio) %>%
+        mutate(time = years)
+    mixed_linear <- lme4::lmer(value ~ time + (1 | sample_id), data = df)
+    cat("\n")
+    cat(paste0("Summary for mixed effect model for", bio, ": ", "\n"))
+    cat(kable(as.data.frame(summary(mixed_linear)$coef)) %>% kable_styling())
+    cat("\n")
+    cat(paste("Confidence intevals for annual degradation as percentage: \n"))
+    cat("\n")
+    ci_model <- confint(mixed_linear)[4,] %>%
+        kbl() %>%
+        kable_styling()
+    cat(paste(ci_model, "\n"))
+}
+```
+
+## Estimation of degradation rate
+
+In this section we run 4 models with increasing complexity in order to analyse stability and estimate rate of degradation (and half-life DT50).
+
+Prior to analysis, the data was transformed so that all salivary concentrations
+are as a proportion of baseline concentration. i.e.:
+
+$$
+y_{transformed} = y_t / y_0
+$$
+
+for all $t \sim 1, ... , 5$
+
+For each biomarker we model degradation using four types of likelihood functions:
+
+1. Simple linear model (% as function of time)
+
+$$y = y_0 - kt$$
+
+2. Hierarchical linear model (each participant has different slope)
+
+$$y = y_0 - k_jt$$
+$$k \sim N(0, \sigma_j)$$
+
+3. Single-First Order (SFO) Exponential Decay
+
+$$
+\frac{dy}{dt} = -ky
+$$
+
+i.e. the rate of degradation is proportional to the concentration of biomarker. This translates to the model:
+
+$$
+y = y_0e^{-kt}
+$$
+
+4. Hierarchical SFO (each participant has different rate parameter)
+
+$$y = y_0e^{-kt}$$
+$$ k \sim N(0, \sigma_j)$$
+
+Following this, we fit four models using a Bayesian framework. First we capture available structural knowledge about parameters by setting weakly informative
+prior distributions the parameters (except for the intercept, which has a prior centred around $y_0 = 1$).
+
+We then obtain the prior distribution for the parameters
+
+We then use [leave-one-out cross-validation](https://mc-stan.org/loo/reference/psis.html) in order to 
+
+<!-- Only run code chunk if models are NOT all fitted --> 
+
+```{r fitting_models, echo=FALSE}
+
+REFIT_SAVED_MODELS = FALSE
+
+biomarkers <- unique(tms_processed$biomarker)
+
+SFO_k_fixed_formula <- brmsformula(
+  fraction ~ C0 * exp(-k * years),
+  C0~1, #alternative option = 1+(1|sample_id), 
+  k~1,
+  nl=TRUE)
+
+SFO_k_random_formula <- brmsformula(
+  fraction ~ C0 * exp(-k * years),
+  C0~1, #alternative option = 1+(1|sample_id), 
+  k~1+(1|sample_id),
+  nl=TRUE)
+
+for (bio in biomarkers){
+    print("Calculating stability for")
+    print(bio)
+
+    df <- tms_processed %>% filter(biomarker == bio)
+
+    #SET PRIORS FOR linear models
+    location_b <- mean(df$fraction) %>% signif(., 2)
+    scale_b <- sd(df$fraction)
+
+    b_class_prior <- paste0("normal(0, 1)")
+    intercept_prior <- paste0("normal(1, 0.02)")
+    sigma_prior <- paste0("student_t(4, 0, 0.2)")
+    group_variance_prior <- paste0("student_t(4, 0, 0.1)")
+
+    prior_linear_mod1 <- c(
+        prior_string(b_class_prior, class="b"),
+        prior_string(intercept_prior, class="Intercept"),
+        prior_string(group_variance_prior, class="sd"),
+        prior_string(sigma_prior, class="sigma")
+        )
+    if (!file.exists(paste0("./models/", bio, "_linear_mod1.rds")) | REFIT_SAVED_MODELS){
+        print("Fitting linear model (fixed k)")
+        linear_mod1 <- brm(
+            formula = fraction ~ years + (1|sample_id),
+            data = df,
+            prior = prior_linear_mod1,
+            sample_prior = TRUE,
+            family = gaussian(),
+            chains = 6,
+            cores = 12,
+            iter = 3000,
+            warmup = 1000,
+            #backend = "cmdstanr",
+            save_pars = save_pars(all = TRUE)
+            )
+        linear_mod1 <- add_criterion(linear_mod1, "loo", moment_match = TRUE)
+        saveRDS(
+            linear_mod1, 
+            paste0("./models/", bio, "_linear_mod1.rds")
+            )
+        Sys.sleep(5)
+    } else {
+        print("Loading from file linear model (fixed k)")
+        linear_mod1 <- readRDS(paste0("./models/", bio, "_linear_mod1.rds"))
+    }
+    
+    print(summary(linear_mod1))
+
+    prior_linear_mod2 <- c(
+        prior_string(b_class_prior, class = "b"),
+        prior_string(intercept_prior, class = "Intercept"),
+        prior_string(group_variance_prior, class = "sd"),
+        prior_string(sigma_prior, class = "sigma"),
+        prior(lkj(2), class = "cor")
+    )
+
+    print("Fitting linear model (k varies between subject)")
+
+    if (!file.exists(paste0("./models/", bio, "_linear_mod2.rds")) | REFIT_SAVED_MODELS){
+    linear_mod2 <- brm(
+        formula = fraction ~ years + (years | sample_id),
+        data = df,
+        prior = prior_linear_mod2,
+        sample_prior = TRUE,
+        family = gaussian(),
+        chains = 6,
+        cores = 12,
+        iter = 3000,
+        warmup = 1000,
+        #backend = "cmdstanr",
+        save_pars = save_pars(all = TRUE)
+    )
+        linear_mod2 <- add_criterion(linear_mod2, "loo", moment_match=TRUE)
+        saveRDS(
+            linear_mod2, 
+            paste0("./models/", bio, "_linear_mod2.rds"))
+    Sys.sleep(5)
+    } else {
+        print("Loading from file linear model (between-subject k varies)")
+        linear_mod2 <- readRDS(paste0("./models/", bio, "_linear_mod2.rds"))   
+    }
+  
+    print(summary(linear_mod2))
+    #Set priors for SFO models
+    prior_SFO1 <- c(
+        prior_string(intercept_prior, class="b", nlpar="C0"),
+        prior_string("normal(0, 1)", lb=0, nlpar="k"),
+        #prior_string(group_variance_prior, class="sd", nlpar="C0"),
+        prior_string(sigma_prior, class="sigma")
+        )
+
+    if (!file.exists(paste0("./models/", bio, "_SFO_model1.rds")) | REFIT_SAVED_MODELS){
+        print("Fitting SFO model (fixed k)")
+        SFO_model1 <- brm(
+            formula = SFO_k_fixed_formula,
+            sample_prior = TRUE,
+            data = df,
+            family=gaussian(),
+            prior = prior_SFO1,
+            chains = 6,
+            cores = 12,
+            iter = 3000,
+            warmup = 1000,
+            #backend = "cmdstanr",
+            save_pars = save_pars(all = TRUE)
+            )
+        SFO_model1 <- add_criterion(SFO_model1, "loo", moment_match=TRUE)
+        saveRDS(
+            SFO_model1,
+            paste0("./models/", bio, "_SFO_model1.rds"))
+
+        Sys.sleep(5)
+    } else {
+        print("Loading from file SFO model (fixed k)")
+        SFO_model1 <- readRDS(paste0("./models/", bio, "_SFO_model1.rds"))   
+    }
+
+    print(summary(SFO_model1))
+
+    prior_SFO2 <- c(
+        prior_string(intercept_prior, class="b", nlpar="C0"),
+        prior_string("normal(0, 1)", lb=0, nlpar="k"),
+        prior_string(group_variance_prior, class="sd", nlpar="k"),
+        prior_string(sigma_prior, class="sigma")
+    )
+    if (!file.exists(paste0("./models/", bio, "_SFO_model2.rds")) | REFIT_SAVED_MODELS){
+        print("Fitting SFO model (k varies between subject)")
+        SFO_model2 <- brm(
+            formula = SFO_k_random_formula,
+            sample_prior = TRUE,
+            data = df,
+            family=gaussian(),
+            prior = prior_SFO2,
+            chains = 6,
+            cores = 12,
+            iter = 3000,
+            warmup = 1000,
+            #backend = "cmdstanr",
+            save_pars = save_pars(all = TRUE)
+        )
+        SFO_model2 <- add_criterion(SFO_model2, "loo", moment_match=TRUE)
+        saveRDS(
+            SFO_model2,
+            paste0("./models/", bio, "_SFO_model2.rds")
+        )
+        Sys.sleep(5)
+    } else {
+        print("Loading from file SFO model (k varies between subject)")
+        SFO_model2 <- readRDS(paste0("./models/", bio, "_SFO_model2.rds"))   
+    }
+
+    print(summary(SFO_model2))
+
+    print("comparing the LOO for models for")
+    print(bio)
+    print(loo_compare(linear_mod1, linear_mod2, SFO_model1, SFO_model2))
+    print("completed analysis for")
+    print(bio)
+}
+```
+
+<!-- Only run this section if models are already fitted --> 

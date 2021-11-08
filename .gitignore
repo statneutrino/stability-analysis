@@ -1,3 +1,6 @@
 .Rproj.user
 stability.code-workspace
 data
+conda_prompt.bat
+run_tms_steroid_stability_files
+.Rhistory
