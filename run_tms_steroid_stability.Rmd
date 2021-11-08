@@ -12,9 +12,28 @@ library(brms)
 
 ## Explanation of modelling process
 
-This R Markdown document estimates the 
-```{r cars}
-summary(cars)
+This R Markdown document estimates the degradation of steroids in long-term
+storage. Samples were extracted from reesarch subjects and analysed at 
+six different timepoints, with the last timepoint >600 days after baseline.
+
+Prior to estimation, the data was transformed so that all salivary concentrations
+are as a proportion of baseline concentration. i.e.:
+
+$$
+y_{transformed} = y_t / y_0
+$$
+
+for all $t \sim 1, ... , 5$
+
+
+
+```{r process_data}
+
+source("./process_tms_data.R")
+# REMOVE OUTLIER
+tms_processed <- tms_processed %>% filter(fraction < 5)
+
+tms_processed$conc_nmol <- tms_processed$value / 1000
 ```
 
 ## Including Plots
