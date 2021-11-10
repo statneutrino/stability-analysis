@@ -18,7 +18,7 @@ library(jtools)
 ## Explanation of modelling process
 
 This R Markdown document estimates the degradation of steroids in long-term
-storage. Samples were extracted from reesarch subjects and analysed at 
+storage. Samples were extracted from research subjects and analysed at 
 six different timepoints, with the last timepoint >600 days after baseline.
 
 ```{r process_data}
@@ -146,13 +146,13 @@ biomarkers <- unique(tms_processed$biomarker)
 
 SFO_k_fixed_formula <- brmsformula(
   fraction ~ C0 * exp(-k * years),
-  C0~1, #alternative option = 1+(1|sample_id), 
+  C0~1+(1|sample_id), 
   k~1,
   nl=TRUE)
 
 SFO_k_random_formula <- brmsformula(
   fraction ~ C0 * exp(-k * years),
-  C0~1, #alternative option = 1+(1|sample_id), 
+  C0~1+(1|sample_id),
   k~1+(1|sample_id),
   nl=TRUE)
 
@@ -183,14 +183,15 @@ for (bio in biomarkers){
             formula = fraction ~ years + (1|sample_id),
             data = df,
             prior = prior_linear_mod1,
-            sample_prior = TRUE,
+            #sample_prior = TRUE,
             family = gaussian(),
             chains = 6,
             cores = 12,
             iter = 3000,
             warmup = 1000,
             #backend = "cmdstanr",
-            save_pars = save_pars(all = TRUE)
+            save_pars = save_pars(all = TRUE),
+            control=list(adapt_delta=0.95, max_treedepth=12)
             )
         linear_mod1 <- add_criterion(linear_mod1, "loo", moment_match = TRUE)
         saveRDS(
@@ -220,14 +221,15 @@ for (bio in biomarkers){
         formula = fraction ~ years + (years | sample_id),
         data = df,
         prior = prior_linear_mod2,
-        sample_prior = TRUE,
+        #sample_prior = TRUE,
         family = gaussian(),
         chains = 6,
         cores = 12,
         iter = 3000,
         warmup = 1000,
         #backend = "cmdstanr",
-        save_pars = save_pars(all = TRUE)
+        save_pars = save_pars(all = TRUE),
+        control=list(adapt_delta=0.95, max_treedepth=12)
     )
         linear_mod2 <- add_criterion(linear_mod2, "loo", moment_match=TRUE)
         saveRDS(
@@ -244,7 +246,7 @@ for (bio in biomarkers){
     prior_SFO1 <- c(
         prior_string(intercept_prior, class="b", nlpar="C0"),
         prior_string("normal(0, 1)", lb=0, nlpar="k"),
-        #prior_string(group_variance_prior, class="sd", nlpar="C0"),
+        prior_string(group_variance_prior, class="sd", nlpar="C0"),
         prior_string(sigma_prior, class="sigma")
         )
 
@@ -252,7 +254,7 @@ for (bio in biomarkers){
         print("Fitting SFO model (fixed k)")
         SFO_model1 <- brm(
             formula = SFO_k_fixed_formula,
-            sample_prior = TRUE,
+            #sample_prior = TRUE,
             data = df,
             family=gaussian(),
             prior = prior_SFO1,
@@ -261,7 +263,8 @@ for (bio in biomarkers){
             iter = 3000,
             warmup = 1000,
             #backend = "cmdstanr",
-            save_pars = save_pars(all = TRUE)
+            save_pars = save_pars(all = TRUE),
+            control=list(adapt_delta=0.95, max_treedepth=12)
             )
         SFO_model1 <- add_criterion(SFO_model1, "loo", moment_match=TRUE)
         saveRDS(
@@ -280,13 +283,14 @@ for (bio in biomarkers){
         prior_string(intercept_prior, class="b", nlpar="C0"),
         prior_string("normal(0, 1)", lb=0, nlpar="k"),
         prior_string(group_variance_prior, class="sd", nlpar="k"),
+        prior_string(group_variance_prior, class="sd", nlpar="C0"),
         prior_string(sigma_prior, class="sigma")
     )
     if (!file.exists(paste0("./models/", bio, "_SFO_model2.rds")) | REFIT_SAVED_MODELS){
         print("Fitting SFO model (k varies between subject)")
         SFO_model2 <- brm(
             formula = SFO_k_random_formula,
-            sample_prior = TRUE,
+            #sample_prior = TRUE,
             data = df,
             family=gaussian(),
             prior = prior_SFO2,
@@ -295,7 +299,8 @@ for (bio in biomarkers){
             iter = 3000,
             warmup = 1000,
             #backend = "cmdstanr",
-            save_pars = save_pars(all = TRUE)
+            save_pars = save_pars(all = TRUE),
+            control=list(adapt_delta=0.95, max_treedepth=12)
         )
         SFO_model2 <- add_criterion(SFO_model2, "loo", moment_match=TRUE)
         saveRDS(

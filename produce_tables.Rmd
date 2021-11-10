@@ -1,0 +1,188 @@
+---
+title: "TMS-Assayed Saliva Stability Analysis"
+author: "Alex Spiers"
+date: "08/11/2021"
+output: html_document
+---
+
+## Test for stability: repeated measures ANOVA
+
+Conduct repeated measures ANOVA and extract F-statistic and related p-value to test null hypothesis of stability:
+
+```{r process_data, include=FALSE}
+library(tidyverse)
+library(brms)
+library(knitr)
+library(kableExtra)
+library(lme4)
+source("./process_tms_data.R")
+```
+
+```{r ANOVA, results='asis', echo=FALSE, warning=FALSE, message=FALSE}
+# REMOVE OUTLIER
+tms_processed <- tms_processed %>% filter(fraction < 5)
+
+tms_processed$conc_nmol <- tms_processed$value / 1000
+
+anova_results <- data.frame()
+biomarker_name <- vector()
+for (bio in unique(tms_processed$biomarker)){
+
+    df <- tms_processed %>% filter(biomarker == bio) %>%
+        mutate(time = years)
+
+    anova_fit <- rstatix::anova_test(data = df, dv = value, wid = sample_id, within = time)
+    biomarker_name <- c(biomarker_name, bio)
+    anova_results <- rbind(anova_results, rstatix::get_anova_table(anova_fit))
+}
+data.frame(anova_results) %>%
+    mutate(biomarker = biomarker_name) %>%
+    select(biomarker, everything()) %>%
+    kbl() %>%
+    kable_styling()
+
+```
+
+### Post hoc estimation of rate constant in exponential decay model
+
+```{r posthoc, results='asis', echo=FALSE, warning=FALSE, message=FALSE}
+biomarker_names <- vector()
+degrad_results <- data.frame()
+biomarker_name <- vector()
+for (bio in unique(tms_processed$biomarker)){
+    df <- tms_processed %>% filter(biomarker == bio)
+
+    # linear_hier <- readRDS(paste0("./models/", bio, "_linear_mod2.rds"))
+    sfo_hier <- readRDS(paste0("./models/", bio, "_sfo_model2.rds"))
+
+    # linear_est <- fixef(linear_hier)[2,1]
+    # linear_se <- fixef(linear_hier)[2,2]
+    # linear_lower <- fixef(linear_hier)[2,3]
+    # linear_upper<- fixef(linear_hier)[2,4]
+
+    sfo_est <- fixef(sfo_hier)[2,1]
+    sfo_se <- fixef(sfo_hier)[2,2]
+    sfo_lower <- fixef(sfo_hier)[2,3]
+    sfo_upper<- fixef(sfo_hier)[2,4]
+
+    degrad_results <- rbind(degrad_results,
+    data.frame(
+        # linear_est = linear_est,
+        # linear_se = linear_se,
+        # linear_lower = linear_lower,
+        # linear_upper = linear_upper,
+        sfo_est = sfo_est,
+        sfo_se = sfo_se,
+        sfo_lower = sfo_lower,
+        sfo_upper = sfo_upper
+    ))
+    biomarker_name <- c(biomarker_name, bio)
+}
+degrad_results <- data.frame(degrad_results) %>%
+    mutate(biomarker = biomarker_name) %>%
+    select(biomarker, everything()) %>%
+    mutate(across(sfo_est:sfo_upper, ~ signif(.x, 3)))
+
+#Publish to html
+degrad_results %>%
+    kbl() %>%
+    kable_styling()
+
+cat("\n")
+cat("### Corresponding half-lives \n") 
+cat("\n")
+
+half_lives <- data.frame(
+    biomarker = biomarker_name,
+    # linear_hl = -0.5 / degrad_results$linear_est,
+    # linear_hl_lower = -0.5 / degrad_results$linear_lower,
+    # linear_hl_upper = -0.5 / degrad_results$linear_upper,
+    sfo_hl = log(2) / degrad_results$sfo_est,
+    sfo_hl_lower = log(2) / degrad_results$sfo_lower,
+    sfo_hl_upper = log(2) / degrad_results$sfo_upper
+) %>%
+    mutate(across(sfo_hl:sfo_hl_upper, ~ signif(.x, 3)))
+
+half_lives %>%
+    kbl() %>%
+    kable_styling()
+```
+
+### Show fit to data for estimated models
+
+```{r conditiona_effect_plots, results='asis', echo=FALSE, warning=FALSE, message=FALSE}
+for (bio in unique(tms_processed$biomarker)){
+    df <- tms_processed %>% filter(biomarker == bio)
+
+cat("\n")
+cat("#### Conditional effect plot for ", bio,": \n")
+cat("\n")
+
+models <- paste0("./models/",list.files(
+  path = "./models",
+  pattern = bio
+))
+
+linear_mod1 <- readRDS(models[1])
+linear_mod2 <- readRDS(models[2])
+sfo_mod1 <- readRDS(models[3])
+sfo_mod2 <- readRDS(models[4])
+
+x1 <- conditional_effects(linear_mod1)$years %>% data.frame()
+x2 <- conditional_effects(linear_mod2)$years %>% data.frame()
+x3 <- conditional_effects(sfo_mod1)$years %>% data.frame()
+x4 <- conditional_effects(sfo_mod2)$years %>% data.frame()
+
+cond_effect_plot_data <- rbind(
+  data.frame(
+    years = x1$years,
+    fraction = x1$fraction,
+    x = x1$effect1__,
+    est = x1$estimate__,
+    lower = x1$lower__,
+    upper = x1$upper__,
+    model = rep("linear_fixed", 100)
+  ),
+  data.frame(
+    years = x2$years,
+    fraction = x2$fraction,
+    x = x2$effect1__,
+    est = x2$estimate__,
+    lower = x2$lower__,
+    upper = x2$upper__,
+    model = rep("linear_random", 100)
+  ),
+  data.frame(
+    years = x3$years,
+    fraction = x3$fraction,
+    x = x3$effect1__,
+    est = x3$estimate__,
+    lower = x3$lower__,
+    upper = x3$upper__,
+    model = rep("sfo_fixed", 100)
+  ),
+  data.frame(
+    years = x4$years,
+    fraction = x4$fraction,
+    x = x4$effect1__,
+    est = x4$estimate__,
+    lower = x4$lower__,
+    upper = x4$upper__,
+    model = rep("sfo_random", 100)
+  )
+)
+
+print(ggplot(data = cond_effect_plot_data %>% filter(model %in% c("sfo_random"))) + # alternative c("linear_random", "sfo_random"))) + 
+  geom_line(aes(x = x, y = est, col=model, group=model)) + 
+  geom_ribbon(
+    aes(x = x, ymin = lower, ymax = upper, fill=model, group=model), 
+    alpha=0.2) + 
+  geom_point(data=df, aes(x = years, y = fraction)) + 
+  theme_minimal() +
+  ylab("Conc of steroid as proportion of baseline") + 
+  xlab("Time / years"))
+
+cat("\n")
+cat("\n")
+}
+```

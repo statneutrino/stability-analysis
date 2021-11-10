@@ -19,13 +19,13 @@ biomarkers <- unique(tms_processed$biomarker)
 
 SFO_k_fixed_formula <- brmsformula(
   fraction ~ C0 * exp(-k * years),
-  C0~1, #alternative option = 1+(1|sample_id), 
+  C0~1+(1|sample_id), 
   k~1,
   nl=TRUE)
 
 SFO_k_random_formula <- brmsformula(
   fraction ~ C0 * exp(-k * years),
-  C0~1, #alternative option = 1+(1|sample_id), 
+  C0~1+(1|sample_id), 
   k~1+(1|sample_id),
   nl=TRUE)
 
@@ -106,7 +106,7 @@ for (bio in biomarkers){
   prior_SFO1 <- c(
     prior_string(intercept_prior, class="b", nlpar="C0"),
     prior_string("normal(0, 1)", lb=0, nlpar="k"),
-    #prior_string(group_variance_prior, class="sd", nlpar="C0"),
+    prior_string(group_variance_prior, class="sd", nlpar="C0"),
     prior_string(sigma_prior, class="sigma")
   )
   print("Fitting SFO model (fixed k)")
@@ -133,6 +133,7 @@ for (bio in biomarkers){
   prior_SFO2 <- c(
     prior_string(intercept_prior, class="b", nlpar="C0"),
     prior_string("normal(0, 1)", lb=0, nlpar="k"),
+    prior_string(group_variance_prior, class="sd", nlpar="C0"),
     prior_string(group_variance_prior, class="sd", nlpar="k"),
     prior_string(sigma_prior, class="sigma")
   )
@@ -237,4 +238,6 @@ IORE_fixed <- brm(
   #backend = "cmdstanr",
   save_pars = save_pars(all = TRUE)
 )
+
+conditional_effects(IORE_fixed)
 
