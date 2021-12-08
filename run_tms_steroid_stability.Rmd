@@ -138,7 +138,7 @@ We then use [leave-one-out cross-validation](https://mc-stan.org/loo/reference/p
 
 <!-- Only run code chunk if models are NOT all fitted --> 
 
-```{r fitting_models, echo=FALSE}
+```{r fitting_models, echo=FALSE, debug=TRUE}
 
 REFIT_SAVED_MODELS = FALSE
 
@@ -191,7 +191,7 @@ for (bio in biomarkers){
             warmup = 1000,
             #backend = "cmdstanr",
             save_pars = save_pars(all = TRUE),
-            control=list(adapt_delta=0.95, max_treedepth=12)
+            control=list(adapt_delta=0.99, max_treedepth=15)
             )
         linear_mod1 <- add_criterion(linear_mod1, "loo", moment_match = TRUE)
         saveRDS(
@@ -229,7 +229,7 @@ for (bio in biomarkers){
         warmup = 1000,
         #backend = "cmdstanr",
         save_pars = save_pars(all = TRUE),
-        control=list(adapt_delta=0.95, max_treedepth=12)
+        control=list(adapt_delta=0.99, max_treedepth=15)
     )
         linear_mod2 <- add_criterion(linear_mod2, "loo", moment_match=TRUE)
         saveRDS(
@@ -264,7 +264,7 @@ for (bio in biomarkers){
             warmup = 1000,
             #backend = "cmdstanr",
             save_pars = save_pars(all = TRUE),
-            control=list(adapt_delta=0.95, max_treedepth=12)
+            control=list(adapt_delta=0.99, max_treedepth=15)
             )
         SFO_model1 <- add_criterion(SFO_model1, "loo", moment_match=TRUE)
         saveRDS(
@@ -300,7 +300,7 @@ for (bio in biomarkers){
             warmup = 1000,
             #backend = "cmdstanr",
             save_pars = save_pars(all = TRUE),
-            control=list(adapt_delta=0.95, max_treedepth=12)
+            control=list(adapt_delta=0.99, max_treedepth=15)
         )
         SFO_model2 <- add_criterion(SFO_model2, "loo", moment_match=TRUE)
         saveRDS(

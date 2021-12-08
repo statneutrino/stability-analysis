@@ -26,16 +26,22 @@ tms_processed$conc_nmol <- tms_processed$value / 1000
 
 anova_results <- data.frame()
 biomarker_name <- vector()
+
 for (bio in unique(tms_processed$biomarker)){
-
     df <- tms_processed %>% filter(biomarker == bio) %>%
-        mutate(time = years)
-
-    anova_fit <- rstatix::anova_test(data = df, dv = value, wid = sample_id, within = time)
+      mutate(time = years)
+    
+    lmer_fit <- lme4::lmer(formula = value ~ time + (1 | sample_id), data = df)
+    small_model <- lme4::lmer(formula = value ~  (1 | sample_id), data = df)
     biomarker_name <- c(biomarker_name, bio)
-    anova_results <- rbind(anova_results, rstatix::get_anova_table(anova_fit))
+    # Small Sample Inference for Fixed Effects from Restricted Maximum Likelihood - Kenwood Roger
+    kr_test <- pbkrtest::KRmodcomp(lmer_fit, small_model) 
+    anova_results <- rbind(anova_results, kr_test$test[1,])
+    # print(plot(lmer_fit)) # Assess residuals for model fit
 }
+
 data.frame(anova_results) %>%
+    as.data.frame(row.names = 1:nrow(.)) %>%
     mutate(biomarker = biomarker_name) %>%
     select(biomarker, everything()) %>%
     kbl() %>%
@@ -83,13 +89,18 @@ degrad_results <- data.frame(degrad_results) %>%
     select(biomarker, everything()) %>%
     mutate(across(sfo_est:sfo_upper, ~ signif(.x, 3)))
 
+
+cat("\n")
+cat("### Rate constant (years^-1^) \n") 
+cat("\n")
+
 #Publish to html
 degrad_results %>%
     kbl() %>%
     kable_styling()
 
 cat("\n")
-cat("### Corresponding half-lives \n") 
+cat("### Corresponding half-lives (years) \n") 
 cat("\n")
 
 half_lives <- data.frame(
@@ -98,19 +109,38 @@ half_lives <- data.frame(
     # linear_hl_lower = -0.5 / degrad_results$linear_lower,
     # linear_hl_upper = -0.5 / degrad_results$linear_upper,
     sfo_hl = log(2) / degrad_results$sfo_est,
-    sfo_hl_lower = log(2) / degrad_results$sfo_lower,
-    sfo_hl_upper = log(2) / degrad_results$sfo_upper
+    sfo_hl_lower = log(2) / degrad_results$sfo_upper,
+    sfo_hl_upper = log(2) / degrad_results$sfo_lower
 ) %>%
     mutate(across(sfo_hl:sfo_hl_upper, ~ signif(.x, 3)))
 
 half_lives %>%
     kbl() %>%
     kable_styling()
+
+cat("\n")
+cat("### Estimated annual degradation as percentage \n") 
+cat("\n")
+
+annual_degradation <- data.frame(
+    biomarker = biomarker_name,
+    # linear_hl = -0.5 / degrad_results$linear_est,
+    # linear_hl_lower = -0.5 / degrad_results$linear_lower,
+    # linear_hl_upper = -0.5 / degrad_results$linear_upper,
+    sfo_annual = (1 - exp(-degrad_results$sfo_est)) * 100,
+    sfo_annual_lower = (1 - exp(-degrad_results$sfo_lower)) * 100,
+    sfo_annual_upper = (1 - exp(-degrad_results$sfo_upper)) * 100
+) %>%
+    mutate(across(sfo_annual:sfo_annual_upper, ~ signif(.x, 3)))
+
+annual_degradation %>%
+    kbl() %>%
+    kable_styling()
 ```
 
 ### Show fit to data for estimated models
 
-```{r conditiona_effect_plots, results='asis', echo=FALSE, warning=FALSE, message=FALSE}
+```{r conditional_effect_plots, results='asis', echo=FALSE, warning=FALSE, message=FALSE}
 for (bio in unique(tms_processed$biomarker)){
     df <- tms_processed %>% filter(biomarker == bio)
 
