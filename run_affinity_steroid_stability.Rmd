@@ -1,0 +1,144 @@
+---
+title: "Affinity-Assayed Saliva Stability Analysis"
+author: "Alex Spiers"
+date: "08/11/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(brms)
+library(knitr)
+library(kableExtra)
+library(lme4)
+library(lmerTest)
+library(jtools)
+```
+
+## Explanation of modelling process
+
+This R Markdown document estimates the degradation of steroids in long-term
+storage. Samples were extracted from research subjects and analysed at 
+six different timepoints, with the last timepoint >600 days after baseline.
+
+```{r process_data}
+
+source("./process_affinity_data.R")
+# REMOVE OUTLIER
+affinity_steroids <- affinity_steroids %>% filter(fraction < 5)
+
+affinity_steroids$conc_nmol <- affinity_steroids$value / 1000
+```
+
+### Initial plots of raw data
+
+Plots of raw salivary steroid concentration against time
+
+```{r plot_raw, echo=TRUE}
+ggplot(data = affinity_steroids,
+       aes(x=days, y=value, col=sample_id, group=sample_id)) +
+  geom_line() +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  facet_wrap(vars(biomarker), scales = "free")
+```
+
+### Initial plots of transformed (scaled as proportion of baseline) data
+
+A simple spline model is fitted to estimate general trend
+
+```{r plot_proportions, echo=TRUE}
+ggplot(data = affinity_steroids,
+       aes(x = days, y = 100 * (fraction - 1))) +
+  ylab("% Change") +
+  geom_line(aes(col=sample_id, group=sample_id)) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  facet_wrap(vars(biomarker), scales = "free") +
+  stat_smooth(method = "gam", formula = y ~ s(x, k = 4), size = 1)
+```
+
+## Mixed effects ANOVA
+First we run a mixed effects linear model to test the hypothesis $\beta_1 = 0$ for formula below:
+
+$$conc = beta_0 + u_j + beta_1time + \epsilon$$
+where $$u_j \sim N(0, \sigma_j)$$
+
+for subjects $j = 1, ... ,n$
+
+```{r mixed_ANOVA, results='asis', echo=FALSE,eval=TRUE}
+for (bio in unique(affinity_steroids$biomarker)){
+    cat("\n")
+    cat(paste("#### Analysing:", bio, "\n"))
+    cat("\n")
+
+    df <- affinity_steroids %>% filter(biomarker == bio) %>%
+        mutate(time = years)
+    mixed_linear <- lme4::lmer(fraction ~ time + (1 | sample_id), data = df)
+    cat("\n")
+    cat(paste0("Summary for mixed effect model for", bio, ": ", "\n"))
+    cat(kable(as.data.frame(summary(mixed_linear)$coef)) %>% kable_styling())
+    cat("\n")
+    cat(paste("Confidence intevals for annual degradation as percentage: \n"))
+    cat("\n")
+    ci_model <- confint(mixed_linear)[4,] %>%
+        kbl() %>%
+        kable_styling()
+    cat(paste(ci_model, "\n"))
+}
+```
+
+## Estimation of degradation rate
+
+<!-- Only run code chunk if models are NOT all fitted --> 
+
+```{r fitting_models, echo=FALSE, debug=TRUE}
+
+REFIT_SAVED_MODELS = FALSE
+
+biomarkers <- unique(affinity_steroids$biomarker)
+
+b_class_prior <- paste0("normal(0, 0.5)")
+intercept_prior <- paste0("normal(1, 0.02)")
+sigma_prior <- paste0("student_t(4, 0, 0.2)")
+group_variance_prior <- paste0("student_t(4, 0, 0.1)")
+corr_matrix_prior <- "lkj_corr_cholesky(2)"
+
+prior_linear_mod <- c(
+  prior_string(b_class_prior, class = "b"),
+  prior_string(intercept_prior, class = "Intercept"),
+  prior_string(group_variance_prior, class = "sd"),
+  prior_string(sigma_prior, class = "sigma"),
+  prior_string(corr_matrix_prior, class = "L")
+)
+
+for (bio in biomarkers) {
+    print("Calculating stability for")
+    print(bio)
+
+    df <- affinity_steroids %>% filter(biomarker == bio)
+
+
+    if (!file.exists(paste0("./models/", bio, "_linear_increase.rds")) | REFIT_SAVED_MODELS){
+    linear_mod <- brm(
+        formula = fraction ~ years + (years | sample_id),
+        data = df,
+        prior = prior_linear_mod,
+        #sample_prior = TRUE,
+        family = gaussian(),
+        chains = 6,
+        cores = 12,
+        iter = 3000,
+        warmup = 1000,
+        backend = "cmdstanr"#,
+        #control=list(adapt_delta=0.99, max_treedepth=15)
+    )
+    saveRDS(
+        linear_mod,
+        paste0("./models/", bio, "_linear_increase.rds"))
+    Sys.sleep(5)
+    }
+}
+```
+
+<!-- Only run this section if models are already fitted --> 
