@@ -18,6 +18,9 @@ library(jtools)
 library(kableExtra)
 library(lme4)
 source("./process_affinity_data.R")
+if (getwd() == "C:/Users/as819/OneDrive - Imperial College London/PhD/SCAMP/BASS/Stability Analysis/stability-analysis"){
+  cmdstanr::set_cmdstan_path("C:/Users/as819/Documents/cmdstan-2.28.1")
+}
 ```
 
 
@@ -61,8 +64,8 @@ for (bio in unique(affinity_urine$biomarker)){
     df <- affinity_urine %>% filter(biomarker == bio) %>%
       mutate(time = years)
 
-    lmer_fit <- lme4::lmer(formula = fraction ~ time + (1 | sample_id), data = df)
-    small_model <- lme4::lmer(formula = fraction ~ (1 | sample_id), data = df)
+    lmer_fit <- lme4::lmer(formula = value ~ time + (1 | sample_id), data = df)
+    small_model <- lme4::lmer(formula = value ~ (1 | sample_id), data = df)
     biomarker_name <- c(biomarker_name, bio)
     
     # Small Sample Inference for Fixed Effects from Restricted Maximum Likelihood - Kenwood Roger
@@ -126,4 +129,194 @@ if (!file.exists("./models/Creatinine_linear_increase.rds") | REFIT_SAVED_MODEL)
 
   saveRDS(linear_mod, "./models/Creatinine_linear_increase.rds")
 }
+
+linear_mod1 <- readRDS("./models/Creatinine_linear_increase.rds")
+
+summary(linear_mod1)
+
 ```
+
+
+## Stability of FSH
+## Fitting mixed effects linear model 
+as Creatinine showed moderate increase
+
+
+```{r fitting_models, echo=FALSE, debug=TRUE}
+
+REFIT_SAVED_MODELS = FALSE
+
+SFO_k_fixed_formula <- brmsformula(
+  fraction ~ C0 * exp(-k * years),
+  C0~1+(1|sample_id), 
+  k~1,
+  nl=TRUE)
+
+SFO_k_random_formula <- brmsformula(
+  fraction ~ C0 * exp(-k * years),
+  C0~1+(1|sample_id),
+  k~1+(1|sample_id),
+  nl=TRUE)
+
+
+df <- affinity_urine %>% filter(biomarker == bio)
+
+#SET PRIORS FOR linear models
+location_b <- mean(df$fraction) %>% signif(., 2)
+scale_b <- sd(df$fraction)
+
+b_class_prior <- paste0("normal(0, 1)")
+intercept_prior <- paste0("normal(1, 0.02)")
+sigma_prior <- paste0("student_t(4, 0, 0.2)")
+group_variance_prior <- paste0("student_t(4, 0, 0.1)")
+corr_matrix_prior <- "lkj_corr_cholesky(2)"
+
+prior_linear_mod1 <- c(
+  prior_string(b_class_prior, class="b"),
+  prior_string(intercept_prior, class="Intercept"),
+  prior_string(group_variance_prior, class="sd"),
+  prior_string(sigma_prior, class="sigma")
+  )
+
+
+if (!file.exists(paste0("./models/", "FSH_linear_mod1.rds")) | REFIT_SAVED_MODELS){
+    print("Fitting linear model (fixed k)")
+    linear_mod1 <- brm(
+        formula = fraction ~ years + (1|sample_id),
+        data = df,
+        prior = prior_linear_mod1,
+        #sample_prior = TRUE,
+        family = gaussian(),
+        chains = 6,
+        cores = 12,
+        iter = 3000,
+        warmup = 1000,
+        backend = "cmdstanr",
+        #save_pars = save_pars(all = TRUE),
+        control=list(adapt_delta=0.99, max_treedepth=15)
+        )
+    saveRDS(
+        linear_mod1, 
+        paste0("./models/", "FSH_linear_mod1.rds")
+        )
+    Sys.sleep(5)
+} else {
+    print("Loading from file linear model (fixed k)")
+    linear_mod1 <- readRDS(paste0("./models/", "FSH_linear_mod1.rds"))
+}
+
+print(summary(linear_mod1))
+
+prior_linear_mod2 <- c(
+    prior_string(b_class_prior, class = "b"),
+    prior_string(intercept_prior, class = "Intercept"),
+    prior_string(group_variance_prior, class = "sd"),
+    prior_string(sigma_prior, class = "sigma"),
+     prior_string(corr_matrix_prior, class = "L")
+)
+
+print("Fitting linear model (k varies between subject)")
+
+if (!file.exists(paste0("./models/", "FSH_linear_mod2.rds")) | REFIT_SAVED_MODELS){
+linear_mod2 <- brm(
+    formula = fraction ~ years + (years | sample_id),
+    data = df,
+    prior = prior_linear_mod2,
+    #sample_prior = TRUE,
+    family = gaussian(),
+    chains = 6,
+    cores = 12,
+    iter = 3000,
+    warmup = 1000,
+    backend = "cmdstanr",
+    control=list(adapt_delta=0.99, max_treedepth=15)
+)
+    saveRDS(
+        linear_mod2, 
+        paste0("./models/", "FSH_linear_mod2.rds"))
+Sys.sleep(5)
+} else {
+    print("Loading from file linear model (between-subject k varies)")
+    linear_mod2 <- readRDS(paste0("./models/", "FSH_linear_mod2.rds"))   
+}
+
+print(summary(linear_mod2))
+#Set priors for SFO models
+prior_SFO1 <- c(
+    prior_string(intercept_prior, class="b", nlpar="C0"),
+    prior_string("normal(0, 1)", lb=0, nlpar="k"),
+    prior_string(group_variance_prior, class="sd", nlpar="C0"),
+    prior_string(sigma_prior, class="sigma")
+    )
+
+if (!file.exists(paste0("./models/", "FSH_SFO_model1.rds")) | REFIT_SAVED_MODELS){
+    print("Fitting SFO model (fixed k)")
+    SFO_model1 <- brm(
+        formula = SFO_k_fixed_formula,
+        #sample_prior = TRUE,
+        data = df,
+        family=gaussian(),
+        prior = prior_SFO1,
+        chains = 6,
+        cores = 12,
+        iter = 3000,
+        warmup = 1000,
+        backend = "cmdstanr",
+        control=list(adapt_delta=0.99, max_treedepth=15)
+        )
+    saveRDS(
+        SFO_model1,
+        paste0("./models/", "FSH_SFO_model1.rds"))
+
+    Sys.sleep(5)
+} else {
+    print("Loading from file SFO model (fixed k)")
+    SFO_model1 <- readRDS(paste0("./models/", "FSH_SFO_model1.rds"))   
+}
+
+print(summary(SFO_model1))
+
+prior_SFO2 <- c(
+    prior_string(intercept_prior, class="b", nlpar="C0"),
+    prior_string("normal(0, 1)", lb=0, nlpar="k"),
+    prior_string(group_variance_prior, class="sd", nlpar="k"),
+    prior_string(group_variance_prior, class="sd", nlpar="C0"),
+    prior_string(sigma_prior, class="sigma")
+)
+if (!file.exists(paste0("./models/", "FSH_SFO_model2.rds")) | REFIT_SAVED_MODELS){
+    print("Fitting SFO model (k varies between subject)")
+    SFO_model2 <- brm(
+        formula = SFO_k_random_formula,
+        #sample_prior = TRUE,
+        data = df,
+        family=gaussian(),
+        prior = prior_SFO2,
+        chains = 6,
+        cores = 12,
+        iter = 3000,
+        warmup = 1000,
+        backend = "cmdstanr",
+        #save_pars = save_pars(all = TRUE),
+        control=list(adapt_delta=0.99, max_treedepth=15)
+    )
+    #SFO_model2 <- add_criterion(SFO_model2, "loo", moment_match=TRUE)
+    saveRDS(
+        SFO_model2,
+        paste0("./models/", "FSH_SFO_model2.rds")
+    )
+    Sys.sleep(5)
+} else {
+    print("Loading from file SFO model (k varies between subject)")
+    SFO_model2 <- readRDS(paste0("./models/", "FSH_SFO_model2.rds"))   
+}
+
+print(summary(SFO_model2))
+
+# print("comparing the LOO for models for")
+# print(bio)
+# print(loo_compare(linear_mod1, linear_mod2, SFO_model1, SFO_model2))
+# print("completed analysis for")
+# print(bio)
+```
+
+

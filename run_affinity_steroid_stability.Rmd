@@ -140,7 +140,7 @@ for (bio in biomarkers) {
     }
 }
 
-print(summary(linear_mod))
+summary(linear_mod)
 ```
 
 <!-- Only run this section if models are already fitted --> 
