@@ -1,0 +1,129 @@
+---
+title: "Affinity Urine Stability Analysis"
+author: "Alex Spiers"
+date: "12/12/2021"
+output: html_document
+---
+
+
+## Test for stability: repeated measures ANOVA
+
+Conduct repeated measures ANOVA and extract F-statistic and related p-value to test null hypothesis of stability:
+
+```{r process_data, include=FALSE}
+library(tidyverse)
+library(brms)
+library(knitr)
+library(jtools)
+library(kableExtra)
+library(lme4)
+source("./process_affinity_data.R")
+```
+
+
+### Initial plots of raw data
+
+Plots of raw salivary steroid concentration against time
+
+```{r plot_raw, echo=TRUE}
+ggplot(data = affinity_urine,
+       aes(x=days, y=value, col=sample_id, group=sample_id)) +
+  geom_line() +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  facet_wrap(vars(biomarker), scales = "free")
+```
+
+### Initial plots of transformed (scaled as proportion of baseline) data
+
+A simple spline model is fitted to estimate general trend
+
+```{r plot_proportions, echo=TRUE}
+ggplot(data = affinity_urine,
+       aes(x = days, y = 100 * (fraction - 1))) +
+  ylab("% Change") +
+  geom_line(aes(col=sample_id, group=sample_id)) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  facet_wrap(vars(biomarker), scales = "free") +
+  stat_smooth(method = "gam", formula = y ~ s(x, k = 4), size = 1)
+```
+
+```{r ANOVA, results='asis', echo=FALSE, warning=FALSE, message=FALSE}
+# REMOVE OUTLIER
+affinity_urine <- affinity_urine %>% filter(fraction < 5)
+
+anova_results <- data.frame()
+biomarker_name <- vector()
+
+for (bio in unique(affinity_urine$biomarker)){
+
+    df <- affinity_urine %>% filter(biomarker == bio) %>%
+      mutate(time = years)
+
+    lmer_fit <- lme4::lmer(formula = fraction ~ time + (1 | sample_id), data = df)
+    small_model <- lme4::lmer(formula = fraction ~ (1 | sample_id), data = df)
+    biomarker_name <- c(biomarker_name, bio)
+    
+    # Small Sample Inference for Fixed Effects from Restricted Maximum Likelihood - Kenwood Roger
+    kr_test <- pbkrtest::KRmodcomp(lmer_fit, small_model) 
+    anova_results <- rbind(anova_results, kr_test$test[1,])
+    
+    # print(plot(lmer_fit)) # Assess residuals for model fit
+    print(paste("summary for", bio))
+    print(summ(lmer_fit))
+    print(confint(lmer_fit))
+}
+
+data.frame(anova_results) %>%
+    as.data.frame(row.names = 1:nrow(.)) %>%
+    mutate(biomarker = biomarker_name) %>%
+    select(biomarker, everything()) %>%
+    kbl() %>%
+    kable_styling()
+
+```
+
+## Stability of Creatinine
+## Fitting mixed effects linear model 
+as Creatinine showed moderate increase
+
+```{r creatinine_fit, echo=FALSE, debug=TRUE}
+
+REFIT_SAVED_MODEL <- FALSE
+
+b_class_prior <- paste0("normal(0, 0.5)")
+intercept_prior <- paste0("normal(1, 0.02)")
+sigma_prior <- paste0("student_t(4, 0, 0.2)")
+group_variance_prior <- paste0("student_t(4, 0, 0.1)")
+corr_matrix_prior <- "lkj_corr_cholesky(2)"
+
+prior_linear_mod <- c(
+  prior_string(b_class_prior, class = "b"),
+  prior_string(intercept_prior, class = "Intercept"),
+  prior_string(group_variance_prior, class = "sd"),
+  prior_string(sigma_prior, class = "sigma"),
+  prior_string(corr_matrix_prior, class = "L")
+)
+
+df <- affinity_steroids %>% filter(biomarker == "Creatinine")
+
+
+if (!file.exists("./models/Creatinine_linear_increase.rds") | REFIT_SAVED_MODEL){
+  linear_mod <- brm(
+      formula = fraction ~ years + (years | sample_id),
+      data = df,
+      prior = prior_linear_mod,
+      #sample_prior = TRUE,
+      family = gaussian(),
+      chains = 6,
+      cores = 12,
+      iter = 3000,
+      warmup = 1000,
+      backend = "cmdstanr"#,
+      #control=list(adapt_delta=0.99, max_treedepth=15)
+  )
+
+  saveRDS(linear_mod, "./models/Creatinine_linear_increase.rds")
+}
+```

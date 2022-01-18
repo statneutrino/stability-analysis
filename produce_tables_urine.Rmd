@@ -1,0 +1,84 @@
+---
+title: "Affinity-Assayed Urine Biomarker Stability Analysis"
+author: "Alex Spiers"
+date: "09/12/2021"
+output: html_document
+---
+
+## Test for stability: repeated measures ANOVA
+
+Conduct repeated measures ANOVA and extract F-statistic and related p-value to test null hypothesis of stability:
+
+```{r process_data, include=FALSE}
+library(tidyverse)
+library(brms)
+library(knitr)
+library(jtools)
+library(kableExtra)
+library(lme4)
+source("./process_affinity_data.R")
+```
+
+
+### Initial plots of raw data
+
+Plots of raw salivary steroid concentration against time
+
+```{r plot_raw, echo=TRUE}
+ggplot(data = affinity_urine,
+       aes(x=days, y=value, col=sample_id, group=sample_id)) +
+  geom_line() +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  facet_wrap(vars(biomarker), scales = "free")
+```
+
+### Initial plots of transformed (scaled as proportion of baseline) data
+
+A simple spline model is fitted to estimate general trend
+
+```{r plot_proportions, echo=TRUE}
+ggplot(data = affinity_urine,
+       aes(x = days, y = 100 * (fraction - 1))) +
+  ylab("% Change") +
+  geom_line(aes(col=sample_id, group=sample_id)) +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  facet_wrap(vars(biomarker), scales = "free") +
+  stat_smooth(method = "gam", formula = y ~ s(x, k = 4), size = 1)
+```
+
+```{r ANOVA, results='asis', echo=FALSE, warning=FALSE, message=FALSE}
+# REMOVE OUTLIER
+affinity_urine <- affinity_urine %>% filter(fraction < 5)
+
+anova_results <- data.frame()
+biomarker_name <- vector()
+
+for (bio in unique(affinity_urine$biomarker)){
+
+    df <- affinity_urine %>% filter(biomarker == bio) %>%
+      mutate(time = years)
+
+    lmer_fit <- lme4::lmer(formula = fraction ~ time + (1 | sample_id), data = df)
+    small_model <- lme4::lmer(formula = fraction ~ (1 | sample_id), data = df)
+    biomarker_name <- c(biomarker_name, bio)
+    
+    # Small Sample Inference for Fixed Effects from Restricted Maximum Likelihood - Kenwood Roger
+    kr_test <- pbkrtest::KRmodcomp(lmer_fit, small_model) 
+    anova_results <- rbind(anova_results, kr_test$test[1,])
+    
+    # print(plot(lmer_fit)) # Assess residuals for model fit
+    print(paste("summary for", bio))
+    print(summ(lmer_fit))
+    print(confint(lmer_fit))
+}
+
+data.frame(anova_results) %>%
+    as.data.frame(row.names = 1:nrow(.)) %>%
+    mutate(biomarker = biomarker_name) %>%
+    select(biomarker, everything()) %>%
+    kbl() %>%
+    kable_styling()
+
+```

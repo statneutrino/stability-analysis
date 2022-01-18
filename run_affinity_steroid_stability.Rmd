@@ -139,6 +139,8 @@ for (bio in biomarkers) {
     Sys.sleep(5)
     }
 }
+
+print(summary(linear_mod))
 ```
 
 <!-- Only run this section if models are already fitted --> 

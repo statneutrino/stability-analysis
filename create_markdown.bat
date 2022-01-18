@@ -1,4 +1,4 @@
 @echo off
-PATH "C:\Program Files\R\R-4.0.5\bin\x64";%path%
+PATH "C:\Program Files\R\R-4.1.2\bin";%path%
 @echo on
-Rscript --vanilla create_report.R --input="produce_tables_urine.Rmd" --filename="urine_output_tables.html" --dir="results"
+Rscript --vanilla create_report.R --input="run_affinity_urine_stability.Rmd" --filename="urine_fitting.html" --dir="results"
