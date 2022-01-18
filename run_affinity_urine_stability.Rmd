@@ -106,7 +106,7 @@ prior_linear_mod <- c(
   prior_string(corr_matrix_prior, class = "L")
 )
 
-df <- affinity_steroids %>% filter(biomarker == "Creatinine")
+df <- affinity_urine %>% filter(biomarker == "Creatinine")
 
 
 if (!file.exists("./models/Creatinine_linear_increase.rds") | REFIT_SAVED_MODEL){
