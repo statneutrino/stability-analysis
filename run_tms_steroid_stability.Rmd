@@ -13,6 +13,10 @@ library(kableExtra)
 library(lme4)
 library(lmerTest)
 library(jtools)
+imperial_path <- "C:/Users/as819/OneDrive - Imperial College London/PhD/SCAMP/BASS/Stability Analysis/stability-analysis"
+if (getwd() ==  imperial_path) {
+    cmdstanr::set_cmdstan_path(path = "C:/Users/as819/R/cmdstan-2.29.2")
+}
 ```
 
 ## Explanation of modelling process
@@ -140,7 +144,7 @@ We then use [leave-one-out cross-validation](https://mc-stan.org/loo/reference/p
 
 ```{r fitting_models, echo=FALSE, debug=TRUE}
 
-REFIT_SAVED_MODELS = FALSE
+REFIT_SAVED_MODELS <- FALSE
 
 biomarkers <- unique(tms_processed$biomarker)
 
@@ -152,8 +156,8 @@ SFO_k_fixed_formula <- brmsformula(
 
 SFO_k_random_formula <- brmsformula(
   fraction ~ C0 * exp(-k * years),
-  C0~1+(1|sample_id),
-  k~1+(1|sample_id),
+  C0~1+(1|ID|sample_id),
+  k~1+(1|ID|sample_id),
   nl=TRUE)
 
 for (bio in biomarkers){
@@ -168,8 +172,8 @@ for (bio in biomarkers){
 
     b_class_prior <- paste0("normal(0, 1)")
     intercept_prior <- paste0("normal(1, 0.02)")
-    sigma_prior <- paste0("student_t(4, 0, 0.2)")
-    group_variance_prior <- paste0("student_t(4, 0, 0.1)")
+    sigma_prior <- paste0("student_t(4, 0, 0.5)")
+    group_variance_prior <- paste0("student_t(4, 0, 0.5)")
 
     prior_linear_mod1 <- c(
         prior_string(b_class_prior, class="b"),
@@ -280,12 +284,14 @@ for (bio in biomarkers){
     print(summary(SFO_model1))
 
     prior_SFO2 <- c(
-        prior_string(intercept_prior, class="b", nlpar="C0"),
-        prior_string("normal(0, 1)", lb=0, nlpar="k"),
-        prior_string(group_variance_prior, class="sd", nlpar="k"),
-        prior_string(group_variance_prior, class="sd", nlpar="C0"),
-        prior_string(sigma_prior, class="sigma")
-    )
+    prior_string(intercept_prior, class="b", nlpar="C0"),
+    prior_string("normal(0, 1)", lb=0, nlpar="k"),
+    prior_string(group_variance_prior, class="sd", nlpar="k"),
+    prior_string(group_variance_prior, class="sd", nlpar="C0"),
+    prior_string(sigma_prior, class="sigma"),
+    prior_string("lkj(1.5)", class = "cor"))
+
+
     if (!file.exists(paste0("./models/", bio, "_SFO_model2.rds")) | REFIT_SAVED_MODELS){
         print("Fitting SFO model (k varies between subject)")
         SFO_model2 <- brm(
